@@ -1,0 +1,12 @@
+# Twitter API v2 Credentials
+twitter_bearer_token: "YOUR_TWITTER_BEARER_TOKEN"
+
+# Reddit API Credentials
+reddit_client_id: "YOUR_REDDIT_CLIENT_ID"
+reddit_client_secret: "YOUR_REDDIT_CLIENT_SECRET"
+reddit_user_agent: "MoroccoSentimentAnalysis/1.0"
+
+# Application Settings
+scrape_interval_seconds: 60
+data_dir: "data"
+port: 8000

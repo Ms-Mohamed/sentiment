@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sujets Chauds - Master Big Data</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="style.css?v=2.4">
+</head>
+<body onload="initSubjectsPage()">
+    <div class="bg-decoration">
+        <div class="glow-1"></div>
+        <div class="glow-2"></div>
+    </div>
+    <header class="app-header">
+        <div class="logo">
+            <h1>Sentiment<span>AI</span> Morocco</h1>
+            <p>Big Data • Real-time Social Analytics</p>
+        </div>
+        <nav class="app-nav" style="display: flex; align-items: center; gap: 20px; margin: 0 auto 0 40px;">
+            <a href="index.html" class="nav-link" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.5rem 1rem; border-bottom: 2px solid transparent; transition: all 0.2s;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-muted)'">📊 Command Center</a>
+            <a href="subjects.html" class="nav-link active" style="color: var(--accent-blue); text-decoration: none; font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.5rem 1rem; border-bottom: 2px solid var(--accent-blue); transition: all 0.2s;">🔥 Topic Hub</a>
+        </nav>
+        <div class="header-meta" style="display: flex; align-items: center; gap: 10px;">
+            <button id="scrape-btn" onclick="triggerScrapeNow()" style="background: var(--bg-elevated); border: 1px solid var(--border-glow); padding: 0.5rem 1rem; border-radius: var(--radius-md); font-size: 0.85rem; font-weight: bold; color: var(--text-primary); cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px;">
+                <span class="icon" style="color: var(--accent-teal);">⚡</span> Run Live Analysis
+            </button>
+            <div id="last-update">Synced 0s ago</div>
+        </div>
+    </header>
+
+    <main class="subjects-grid">
+        <!-- Top Left: Ranked Top 5 Subjects List -->
+        <section class="panel subjects-list-panel">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 0.8rem;">
+                <h2>DYNAMIC TOP 5 SUBJECTS</h2>
+                <span style="font-size: 0.7rem; color: var(--accent-blue); font-weight: bold; background: rgba(0, 210, 255, 0.1); padding: 0.25rem 0.6rem; border-radius: 4px; border: 1px solid rgba(0, 210, 255, 0.2); letter-spacing: 0.05em;">LIVE RANKED BY VOLUME</span>
+            </div>
+            <div class="panel-body-scroll">
+                <div id="subjects-rankings-container" class="subjects-list-container">
+                    <!-- Animated subject rank cards will be injected dynamically -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Top Right: Analytical Metrics & Chart.js Comparison -->
+        <section class="panel subjects-analytics-panel">
+            <div class="panel-header" style="border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 0.8rem;">
+                <h2>SENTIMENT COMPARATIVE ANALYTICS</h2>
+            </div>
+            <div class="chart-container" style="flex: 1; height: 100%; min-height: 0; background: rgba(13, 17, 23, 0.35); border: 1px solid rgba(255, 255, 255, 0.03); border-radius: var(--radius-lg); padding: 1.5rem; display: flex; align-items: center; justify-content: center; position: relative;">
+                <canvas id="subjectsChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Bottom Left: Keyword Tag Cloud & Details -->
+        <section class="panel subjects-details-panel">
+            <div class="panel-header" style="border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 0.8rem;">
+                <h2 id="detail-title" style="font-size: 1.1rem; display: flex; align-items: center; gap: 8px; color: var(--accent-teal);">SELECT A SUBJECT</h2>
+            </div>
+            <div class="panel-body-scroll" style="display: flex; flex-direction: column; gap: 15px;">
+                <p id="detail-desc" style="color: var(--text-muted); font-size: 0.85rem; line-height: 1.6; margin: 0;">Click any dynamic subject card above to inspect live social mentions, keyword clusters, and emotional metrics.</p>
+                
+                <div id="detail-stats" style="display: none; background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: var(--radius-md); padding: 0.85rem; margin-top: 5px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.85rem;">
+                        <span style="color: var(--text-muted);">Moyenne Sentiment</span>
+                        <strong id="detail-sentiment-badge" style="color: var(--accent-teal);">0.00</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+                        <span style="color: var(--text-muted);">Emotion Dominante</span>
+                        <strong id="detail-emotion-badge" style="color: var(--text-primary);">Neutral</strong>
+                    </div>
+                </div>
+
+                <div style="margin-top: 5px;">
+                    <h3 style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.8rem; letter-spacing: 0.05em; font-weight: bold;">Keyword Focus</h3>
+                    <div id="detail-keywords" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        <!-- Keywords -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bottom Right: Relevant Mentions Feed -->
+        <section class="panel subjects-feed-panel">
+            <div class="panel-header" style="border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 0.8rem; display: flex; justify-content: space-between; align-items: center;">
+                <h2>RELEVANT MENTIONS</h2>
+                <span id="detail-count-badge" style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500; background: rgba(255,255,255,0.03); padding: 0.2rem 0.5rem; border-radius: 4px;">0 posts matching</span>
+            </div>
+            <div class="panel-body-scroll" style="padding-top: 0.5rem;">
+                <div id="subject-feed-container" style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
+                    <!-- Filtered posts conveyor feed -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- JS Libraries -->
+    <script src="lib/gsap.min.js"></script>
+    <script src="lib/ScrollTrigger.min.js"></script>
+    <script src="lib/Flip.min.js"></script>
+    <script src="lib/MotionPathPlugin.min.js"></script>
+    <script src="lib/chart.umd.js"></script>
+
+    <!-- App Scripts -->
+    <script src="animations.js?v=2.0"></script>
+    <script src="subjects-page.js?v=2.0" defer></script>
+</body>
+</html>

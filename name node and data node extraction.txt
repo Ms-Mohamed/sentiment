@@ -1,0 +1,2 @@
+docker exec namenode hdfs dfsadmin -report
+docker ps

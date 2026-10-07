@@ -1,0 +1,135 @@
+version: "3"
+
+networks:
+  hadoop_net:
+
+volumes:
+  namenode_data:
+  datanode1_data:
+  datanode2_data:
+  datanode3_data:
+  datanode4_data:
+
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    restart: always
+    ports:
+      - 9870:9870
+      - 9000:9000
+    volumes:
+      - namenode_data:/hadoop/dfs/name
+      # Mount backend directory to run jobs directly if needed
+      - ./backend:/opt/backend
+    environment:
+      - CLUSTER_NAME=test
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_net
+
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000"
+    env_file:
+      - ./hadoop.env
+    ports:
+      - 8088:8088
+    networks:
+      - hadoop_net
+
+  nodemanager1:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager1
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode1:9864 resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+    ports:
+      - 8042:8042
+    networks:
+      - hadoop_net
+      
+  historyserver:
+    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+    container_name: historyserver
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+    ports:
+      - 8188:8188
+    networks:
+      - hadoop_net
+
+  datanode1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode1
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    volumes:
+      - datanode1_data:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_net
+
+  datanode2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode2
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    volumes:
+      - datanode2_data:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_net
+
+  datanode3:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode3
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    volumes:
+      - datanode3_data:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_net
+
+  datanode4:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode4
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    volumes:
+      - datanode4_data:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    networks:
+      - hadoop_net
+
+  backend:
+    build: .
+    container_name: backend
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/opt/backend
+      - ./dashboard:/opt/dashboard
+      - ./Model final.joblib:/opt/Model final.joblib
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - hadoop_net

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1781176623,
+    "type": "VOLUME_SPIKE",
+    "message": "Social media stream volume surge: Ingested 150 new posts in the last 15 minutes (+200% activity spike).",
+    "timestamp": "2026-06-11T12:17:03.634567"
+  },
+  {
+    "id": 1781176633,
+    "type": "REGIONAL_CRISIS",
+    "message": "Critical sentiment drop in Béni Mellal-Khénifra: Local community average fell to -0.4 due to localized complaints.",
+    "timestamp": "2026-06-11T12:17:03.634567"
+  },
+  {
+    "id": 1781176633,
+    "type": "REGIONAL_CRISIS",
+    "message": "Critical sentiment drop in National: Local community average fell to -0.26 due to localized complaints.",
+    "timestamp": "2026-06-11T12:17:03.634567"
+  },
+  {
+    "id": 1781176633,
+    "type": "REGIONAL_CRISIS",
+    "message": "Critical sentiment drop in Oriental: Local community average fell to -0.3 due to localized complaints.",
+    "timestamp": "2026-06-11T12:17:03.634567"
+  }
+]
