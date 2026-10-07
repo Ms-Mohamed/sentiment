@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Exemple</title>
+    <item>
+      <title>Trafic insupportable à Casablanca ce matin</title>
+      <link>https://example.ma/a1</link>
+      <guid>https://example.ma/a1</guid>
+      <pubDate>Mon, 05 Oct 2026 08:30:00 +0000</pubDate>
+      <description>&lt;p&gt;Les automobilistes dénoncent des retards &amp;amp; embouteillages.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>الدار البيضاء تحتضن مهرجانا جديدا</title>
+      <link>https://example.ma/a2</link>
+      <guid>a2</guid>
+      <pubDate>Tue, 06 Oct 2026 10:00:00 +0000</pubDate>
+      <description>مهرجان رائع</description>
+    </item>
+    <item>
+      <title>Résumé des données publiées cette semaine</title>
+      <link>https://example.ma/a3</link>
+      <pubDate>Tue, 06 Oct 2026 11:00:00 +0000</pubDate>
+      <description></description>
+    </item>
+    <item><title>x</title><link>https://example.ma/short</link></item>
+  </channel>
+</rss>

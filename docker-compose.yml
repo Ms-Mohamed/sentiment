@@ -129,7 +129,6 @@ services:
     volumes:
       - ./backend:/opt/backend
       - ./dashboard:/opt/dashboard
-      - ./Model final.joblib:/opt/Model final.joblib
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - hadoop_net

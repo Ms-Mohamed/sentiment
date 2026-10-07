@@ -25,15 +25,19 @@ AFINN_111 = {
     "beau": 2, "belle": 2, "adoré": 4, "aimé": 3, "plaisir": 3, "bonheur": 4, "génial": 4, "parfait": 4, "ravie": 3,
 }
 
-# Try loading the model, but fallback gracefully
+# Try loading the model, but fall back gracefully to the lexicon.
+# NOTE: inside a Hadoop container this import fails unless scikit-learn is installed there;
+# every scored post therefore carries "scorer": "ml" | "lexicon" so you can SEE which one ran.
+MODEL_FINAL = None
+CLASS_INDEX = {"negative": 0, "neutral": 1, "positive": 2}
 try:
     import joblib
-    # Resolve the path dynamically so it works in both local Windows and Docker
+    # Resolve the path dynamically so it works locally, in Docker and on the Hadoop node.
     model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Model final.joblib')
     if os.path.exists(model_path):
         MODEL_FINAL = joblib.load(model_path)
-    else:
-        MODEL_FINAL = None
+        if hasattr(MODEL_FINAL, "classes_"):
+            CLASS_INDEX = {str(c): i for i, c in enumerate(MODEL_FINAL.classes_)}
 except Exception:
     MODEL_FINAL = None
 
@@ -71,35 +75,39 @@ def classify_emotion(text: str, score: float) -> str:
     elif score < -0.3: return "Grievance"
     return "Neutral"
 
+def score_post(post: dict) -> dict:
+    """Add raw_score, emotion and scorer to a post. Shared by the Hadoop mapper and the speed layer."""
+    text = post.get("text", "")
+    if MODEL_FINAL is not None and text.strip():
+        probas = MODEL_FINAL.predict_proba([text])[0]
+        prob_neg = probas[CLASS_INDEX.get("negative", 0)]
+        prob_pos = probas[CLASS_INDEX.get("positive", 2)]
+        raw_score = float(prob_pos - prob_neg)
+
+        if prob_pos > 0.45: emotion = "Pride/Joy"
+        elif prob_neg > 0.45: emotion = "Grievance"
+        elif raw_score < -0.15: emotion = "Concern"
+        elif raw_score > 0.15: emotion = "Peace"
+        else: emotion = "Neutral"
+        post["scorer"] = "ml"
+    else:
+        raw_score = score_text(text)
+        emotion = classify_emotion(text, raw_score)
+        post["scorer"] = "lexicon"
+    post["raw_score"] = raw_score
+    post["emotion"] = emotion
+    return post
+
+
 if __name__ == '__main__':
     for line in sys.stdin:
         line = line.strip()
         if not line: continue
-        
+
         try:
-            post = json.loads(line)
-            text = post.get("text", "")
+            post = score_post(json.loads(line))
             region = post.get("region", "Unknown")
-            
-            if MODEL_FINAL is not None and text.strip():
-                probas = MODEL_FINAL.predict_proba([text])[0]
-                prob_neg, prob_pos = probas[0], probas[2]
-                raw_score = float(prob_pos - prob_neg)
-                
-                if prob_pos > 0.45: emotion = "Pride/Joy"
-                elif prob_neg > 0.45: emotion = "Grievance"
-                elif raw_score < -0.15: emotion = "Concern"
-                elif raw_score > 0.15: emotion = "Peace"
-                else: emotion = "Neutral"
-            else:
-                raw_score = score_text(text)
-                emotion = classify_emotion(text, raw_score)
-                
-            post["raw_score"] = raw_score
-            post["emotion"] = emotion
-            
             # Emit Key-Value pair for Reducer: Region \t JSON_POST
             print("{}\t{}".format(json.dumps(region), json.dumps(post)))
-            
         except Exception as e:
-            pass
+            sys.stderr.write("reporter:counter:sentiment,bad_records,1\n")

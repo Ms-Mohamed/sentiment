@@ -213,7 +213,7 @@ function selectSubject(subjectName, isUpdateOnly = false) {
             if (score < -0.1) scoreColor = "#ff5858";
             else if (Math.abs(score) <= 0.1) scoreColor = "#ffb300";
 
-            const sourceIcon = post.source === "twitter" ? "🐦" : "👽";
+            const sourceIcon = post.source === "news" ? "📰" : "👽";
             const emotionLabel = post.emotion || "Neutral";
 
             const postHTML = `
@@ -221,7 +221,7 @@ function selectSubject(subjectName, isUpdateOnly = false) {
                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                         <span style="color: var(--text-muted); display: flex; align-items: center; gap: 4px;">
                             <span>${sourceIcon}</span>
-                            <strong>${post.source === 'twitter' ? '@TwMorocco' : 'r/Morocco'}</strong>
+                            <strong>${post.source === 'news' ? 'Presse' : 'r/Morocco'}</strong>
                             <span>•</span>
                             <span>${relativeTime}</span>
                             <span>•</span>

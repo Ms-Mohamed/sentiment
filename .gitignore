@@ -40,3 +40,10 @@ yarn-error.log
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Runtime data (collected posts, processed JSON, batch inputs) stays local
+backend/data/
+
+# Hand-labeled evaluation samples
+training/to_label.csv
+training/labeled.csv

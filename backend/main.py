@@ -47,12 +47,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Enable CORS for all origins
+# The dashboard is served by this same app, so only local origins need CORS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=[f"http://localhost:{config.get('port', 8000)}", f"http://127.0.0.1:{config.get('port', 8000)}"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -142,6 +141,30 @@ async def get_pipeline():
     data = get_processed_data("pipeline.json")
     return JSONResponse(content=data, headers={"Cache-Control": "no-store"})
 
+@app.get("/api/sources")
+async def get_sources():
+    """
+    Per-source collector status (last fetch, new posts, errors). Lets you see exactly what is real and what is down.
+    """
+    data = get_processed_data("sources.json")
+    return JSONResponse(content=data, headers={"Cache-Control": "no-store"})
+
+@app.get("/api/replay")
+async def replay(hours: int = 0):
+    """
+    What the dashboard would have shown `hours` ago: heatmap and feed computed only from posts
+    published before that moment. Real history, nothing simulated.
+    """
+    import datetime
+    import sentiment_processor as sp
+    hours = max(0, min(int(hours), 24 * 30))
+    cutoff = datetime.datetime.now() - datetime.timedelta(hours=hours)
+    posts = [p for p in sp.STATE["posts"] if p["created_at"] <= cutoff.isoformat()]
+    feed = sorted(posts, key=lambda x: x["created_at"], reverse=True)[:50]
+    return JSONResponse(content={"hours": hours, "posts_considered": len(posts),
+                                 "heatmap": sp.compute_heatmap(posts), "feed": feed},
+                        headers={"Cache-Control": "no-store"})
+
 @app.post("/api/scrape/now")
 async def trigger_scrape(background_tasks: BackgroundTasks):
     """
@@ -149,28 +172,29 @@ async def trigger_scrape(background_tasks: BackgroundTasks):
     """
     if scraper_instance:
         background_tasks.add_task(scraper_instance.run_cycle)
-        return {"status": "started", "job_id": "manual_scrape_001"}
+        return {"status": "started"}
     return {"status": "error", "message": "Scraper not initialized"}
 
 @app.post("/api/pipeline/crash")
 async def crash_pipeline():
     """
-    Triggers a Chaos Monkey simulation, crashing stage 4 (Anomalies).
+    Failure-injection DEMO: marks stage 4 (Anomalies) as failed so the dashboard's error handling can be shown.
+    This does not crash any real process.
     """
-    logger.warning("💥 CHAOS MONKEY: Triggering pipeline failure!")
+    logger.warning("Failure injection: stage 4 will be reported as failed (demo).")
     with open(os.path.join(data_dir, ".pipeline_failed"), "w") as f:
         f.write("failed")
     
     # Recalculate metrics immediately to reflect changes instantly
     process_raw_files(data_dir)
-    return {"status": "crashed", "message": "Chaos Monkey triggered successfully. Stage 4 in Error."}
+    return {"status": "crashed", "message": "Failure injected on stage 4 (demo)."}
 
 @app.post("/api/pipeline/restore")
 async def restore_pipeline():
     """
     Restores the crashed MapReduce pipeline to normal operation.
     """
-    logger.info("🛠️ CHAOS MONKEY: Restoring pipeline!")
+    logger.info("Failure injection cleared.")
     failed_path = os.path.join(data_dir, ".pipeline_failed")
     if os.path.exists(failed_path):
         os.remove(failed_path)
@@ -186,25 +210,11 @@ class NLPTestRequest(BaseModel):
 @app.post("/api/test-nlp")
 async def test_nlp(request: NLPTestRequest):
     """
-    Tests the NLP model against a user-provided string.
+    Scores a user-provided string with the same code path as the pipeline. `scorer` says whether the ML model or the lexicon fallback answered.
     """
     import mapper
-    text = request.text
-    if mapper.MODEL_FINAL is not None and text.strip():
-        probas = mapper.MODEL_FINAL.predict_proba([text])[0]
-        prob_neg, prob_pos = probas[0], probas[2]
-        raw_score = float(prob_pos - prob_neg)
-        
-        if prob_pos > 0.45: emotion = "Pride/Joy"
-        elif prob_neg > 0.45: emotion = "Grievance"
-        elif raw_score < -0.15: emotion = "Concern"
-        elif raw_score > 0.15: emotion = "Peace"
-        else: emotion = "Neutral"
-    else:
-        raw_score = mapper.score_text(text)
-        emotion = mapper.classify_emotion(text, raw_score)
-        
-    return {"text": text, "score": raw_score, "emotion": emotion}
+    post = mapper.score_post({"text": request.text})
+    return {"text": request.text, "score": post["raw_score"], "emotion": post["emotion"], "scorer": post["scorer"]}
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():

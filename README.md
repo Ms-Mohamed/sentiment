@@ -1,79 +1,81 @@
-# SentimentAI Morocco - Big Data Pipeline
+# SentimentAI Morocco
 
-## System Overview
-This project is an end-to-end Big Data pipeline for real-time sentiment analysis and trend detection across Moroccan social media (Twitter and Reddit). It ingests live social streams, scores texts against an AFINN + custom Arabic/Moroccan sentiment dictionary, and detects regional velocity anomalies. The system visualizes these insights through a high-performance, GSAP-animated dashboard decoupling the heavy MapReduce logic from the real-time API.
+Sentiment and topic monitoring of Moroccan online conversation (French, Arabic, darija/arabizi), built as a
+Big Data pipeline: **Hadoop Streaming (MapReduce) + scikit-learn + FastAPI + Leaflet dashboard**.
+
+> **What is real, what is not** (read this before quoting any number from this project)
+> - Data is collected from **free public sources only**: Reddit RSS (r/Morocco posts and comments; not verified from my build environment, which blocks reddit.com, so check `/api/sources` on your machine) and Moroccan news RSS feeds (Hespress FR/AR, Médias24, Yabiladi: verified as valid RSS; see `backend/config.yaml`). No Twitter/X (the API is paid), and **no synthetic or simulated posts** anywhere in the pipeline.
+> - A post gets a **region only if its text names a Moroccan city/region**. Everything else is `National`. The regional map is therefore sparse by design.
+> - Every figure in `pipeline.json` (record counts, durations) is **measured**. If Docker/Hadoop is not running, the batch job runs the same `mapper.py`/`reducer.py` locally and says so (`engine: local-streaming`).
+> - Each scored post carries `scorer: ml | lexicon` so you can see whether the ML model or the small lexicon fallback produced the score.
+> - Model quality is whatever `training/evaluate.py` measures on **your own hand-labeled sample** (`docs/EVALUATION.md`). Figures in the original academic report (`SentimentAI_Morocco_Rapport.*`) predate this version and used simulated data; they are superseded.
 
 ## Architecture
 
-```text
-[ External Sources ]       [ Backend - Python ]             [ Data Layer ]          [ API Layer - FastAPI ]      [ Frontend - Vanilla JS/GSAP ]
-                                                                                                            
-   ( Simulated )             +--------------+                +------------+                                      +------------------+
-        |                    |  scraper.py  | -------------> | /data/raw/ |                                      |   index.html     |
-        +------------------> |              |                |   *.jsonl  |                                      | (Main Dashboard) |
-                             +--------------+                +------------+                                      +--------+---------+
-   ( Reddit )                       |                               |                                                     ^
-        |                    +--------------+                +------------+                                               |
-        +------------------> |  sentiment_  |                | /data/     |                                      +--------+---------+
-                             |  processor.py| <------------- | processed/ |                                      |     main.js      |
-                             +--------------+                | heatmap.js |                                      | (Orchestrator)   |
-                                    |                        | feed.json  |                                      +--------+---------+
-                             +--------------+                | velocity.j |             +-------------+                   |
-                             |  region_     |                | alerts.js  | <---------  |   main.py   | <-----------------+
-                             |  inferrer.py | -------------> | hashtags.j |             |  (FastAPI)  |          (Polls/Requests)
-                             +--------------+                +------------+             +-------------+
+```
+ Reddit RSS ─┐                      ┌──────── BATCH layer (every batch_interval_seconds) ────────┐
+             ├─► scraper.py ─► data/raw/*.jsonl ─► clean/dedup ─► Hadoop Streaming: mapper.py ─► sort ─► reducer.py ─┐
+ News RSS ───┘   (dedup, real dates,                                (or the same scripts locally)                    │
+                  region = city mention)        └─► SPEED layer: new posts scored in-process (same model) ───────────┤
+                                                                                                                       ▼
+                                           terms/hashtags · subjects · alerts · velocity ─► data/processed/*.json ─► FastAPI ─► dashboard
 ```
 
-## Prerequisites
-- **Python**: Version 3.10+
-- **Pip**: Python package manager
-- **Reddit Account**: Required to generate PRAW credentials for live stream scraping (optional, falls back to simulated data).
+| Stage (pipeline.json) | What actually runs |
+|---|---|
+| 1 Nettoyage | JSON/field validation, source allow-list, de-duplication by `post_id` |
+| 2 NLP Sentiment | Batch: Hadoop Streaming job (map: score + emotion, reduce: per-region aggregation). Between batches: in-process scoring |
+| 3 Hashtags | Real `#hashtags` first, then most frequent terms (no hashtag is ever generated) |
+| 4 Anomalies | Source down, volume spike vs previous days, regional negative drift (≥5 posts), scorer-fallback warning |
+| 5 Vélocité | Day-over-day change of mean sentiment, by publication date |
 
-## Installation
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd <repository-directory>
-   ```
-2. Install the required Python dependencies:
-   ```bash
-   pip install -r backend/requirements.txt
-   ```
+The "Injecter une panne (démo)" button only marks stage 4 as failed to demonstrate the dashboard's error state; it does not crash any process.
+The "Rejeu" slider calls `/api/replay?hours=N`, which recomputes the heatmap/feed from posts that had actually been published N hours ago.
 
-## Configuration
-Before running the system, you must configure your API tokens in `backend/config.yaml`.
-- **Reddit**: Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps), create a new app (script), and copy the Client ID and Secret. Place them under `reddit_client_id` and `reddit_client_secret`.
-- **Other Settings**: You can adjust `scrape_interval_seconds` (default: 60) and the API `port`.
+## Model
 
-## Running
-1. Navigate to the backend directory and start the FastAPI server:
-   ```bash
-   cd backend
-   uvicorn main:app --reload --port 8000
-   ```
-2. Open your browser and navigate to the dashboard:
-   [http://localhost:8000](http://localhost:8000)
+`backend/Model final.joblib`: scikit-learn `Pipeline` = `FeatureUnion(TF-IDF word 1-2-grams (50k) + TF-IDF char_wb 3-6-grams (70k))` → `LogisticRegression(C=2, class_weight=balanced, saga)`, classes `negative/neutral/positive`.
+Score = `P(positive) − P(negative)`. Saved with scikit-learn 1.7.2 (pinned in `requirements.txt`).
+The training data and training script are **not** in this repository, so the model is used as a given artifact; add them under `training/` to make it reproducible.
 
-## Manual Scrape Trigger
-The system polls automatically every 60 seconds. To trigger an immediate scrape (ideal for live demos):
-- **UI**: Click the "Scrape Now" refresh button on the top right of the dashboard.
-- **CLI**: Run the following command:
-  ```bash
-  curl -X POST http://localhost:8000/api/scrape/now
-  ```
+Known limitations: trained on informal text; factual news headlines are often scored as polarized instead of neutral; sarcasm and darija code-switching are weak spots. Measure, don't assume (see below).
 
-## Connecting Real Hadoop Output
-This backend currently simulates the final processing layer. To connect your real Java Hadoop MapReduce output:
-1. Configure your Hadoop jobs to output JSON data.
-2. Drop the generated JSON files directly into `backend/data/processed/` matching these exact formats:
-   - `heatmap.json`: `{"Region Name": {"score": 0.5, "count": 100}, ...}`
-   - `velocity.json`: `[{"time": "YYYY-MM-DD", "avg_sentiment": 0.1, "velocity": 0.05, "count": 50}, ...]`
-   - `alerts.json`: `[{"id": 1, "type": "TREND_SPIKE", "message": "...", "timestamp": "ISO8601"}, ...]`
-   - `feed.json`: `[{"post_id": "1", "source": "twitter", "text": "...", "created_at": "ISO8601", "region": "Casa", "raw_score": 0.8}, ...]`
-   - `hashtags.json`: `[{"tag": "#Maroc", "count": 500, "trend": "up"}, ...]`
+## Run
 
-## Troubleshooting
-- **Scraping Volume**: If Reddit blocks requests, the scraper automatically injects simulated Moroccan social posts to keep the dashboard active.
-- **Reddit 403 Error**: Verify your `reddit_user_agent` in `config.yaml` is descriptive and accurate.
-- **Map Not Showing**: The Leaflet map uses embedded GeoJSON and does not fetch external files. Check the browser console for JavaScript syntax errors.
-- **No Data After Scrape**: Check the `backend/data/raw/` directory to ensure new `.jsonl` files are being generated. Verify network connectivity.
+```bash
+pip install -r backend/requirements.txt
+cd backend && uvicorn main:app --port 8000        # dashboard on http://localhost:8000
+```
+
+The collector starts immediately and then every `scrape_interval_seconds`. `GET /api/sources` shows, per feed, whether the last fetch worked and how many new posts it brought. A feed that fails is skipped and reported; edit feed URLs in `config.yaml`.
+
+With Hadoop (4 DataNodes, YARN, history server):
+
+```bash
+docker compose up -d           # first start takes a few minutes
+```
+
+> **Check this once:** the mapper runs inside the Hadoop workers, which need `scikit-learn` and the model file to use the ML scorer. If they don't have them, `mapper.py` silently falls back to the lexicon. The pipeline's stage-2 detail (`scorers={...}`) and the `SCORER_FALLBACK` alert tell you which one ran.
+
+Manual scrape: `curl -X POST http://localhost:8000/api/scrape/now`
+
+## Measure the model (do this before quoting any metric)
+
+```bash
+python training/make_label_sample.py --n 300      # after a few days of collection
+# fill the `label` column (negative|neutral|positive) in training/to_label.csv, save as training/labeled.csv
+python training/evaluate.py                       # writes docs/EVALUATION.md
+```
+
+## Tests
+
+```bash
+pip install pytest httpx
+python -m pytest tests -q
+```
+
+Covered: RSS/Atom parsing, region inference, de-duplication across cycles and restarts, source-failure isolation, partial-line reads, batch vs speed layer, reducer output vs pure-Python recomputation, failure injection, alerts, replay endpoint.
+
+## Data & privacy
+
+Collected posts are public RSS content; `backend/data/` is git-ignored and stays on your machine.

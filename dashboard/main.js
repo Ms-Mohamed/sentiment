@@ -93,7 +93,7 @@ function initDashboard() {
 // FIX: 5 — Add fallback listener in case body onload fails
 window.addEventListener('DOMContentLoaded', initDashboard);
 
-// Chaos Monkey Simulation Triggers
+// Failure-injection demo triggers (does not crash any real process)
 async function triggerChaosMonkey() {
     console.log("💥 Triggering Chaos Monkey...");
     try {
@@ -368,20 +368,10 @@ function applyGlobalSearchFilter() {
                     }
                 });
                 
-                const slider = document.getElementById('timeline-slider');
-                const sliderVal = slider ? parseInt(slider.value) : 24;
-
                 const filteredHeatmap = {};
                 regions.forEach(r => {
                     const agg = aggregates[r];
                     let score = agg.count > 0 ? (agg.sum / agg.count) : 0.0;
-
-                    // Apply timeline wave function shift if not in live 24h state!
-                    if (sliderVal !== 24) {
-                        const hash = r.charCodeAt(0) + r.charCodeAt(r.length - 1);
-                        const shift = Math.sin((sliderVal + hash) / 2.5) * 0.45; // shift sentiment by up to 0.45 points
-                        score = Math.max(-1.0, Math.min(1.0, score + shift));
-                    }
 
                     filteredHeatmap[r] = {
                         score: score,

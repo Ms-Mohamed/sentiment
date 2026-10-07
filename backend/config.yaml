@@ -1,12 +1,30 @@
-# Twitter API v2 Credentials
-twitter_bearer_token: "YOUR_TWITTER_BEARER_TOKEN"
+# SentimentAI Morocco - configuration (free sources only, no API keys needed)
 
-# Reddit API Credentials
-reddit_client_id: "YOUR_REDDIT_CLIENT_ID"
-reddit_client_secret: "YOUR_REDDIT_CLIENT_SECRET"
-reddit_user_agent: "MoroccoSentimentAnalysis/1.0"
+# --- Collector ---------------------------------------------------------------
+# News is slow: polling every 5 minutes is plenty and keeps us polite.
+scrape_interval_seconds: 300
 
-# Application Settings
-scrape_interval_seconds: 60
+# The Hadoop (batch) job re-processes the whole corpus at most this often.
+# Between batches, new posts are scored directly in-process (speed layer).
+batch_interval_seconds: 1800
+
+user_agent: "MoroccoSentimentAnalysis/2.0 (academic project)"
+
+reddit:
+  subreddits: ["Morocco"]
+  posts_limit: 50       # /r/<sub>/new/.rss
+  comments_limit: 100   # /r/<sub>/comments/.rss  (best source of darija / arabizi)
+
+# Moroccan news RSS. A feed that fails is logged, reported in /api/sources and skipped.
+# URLs are config, not code: fix or add feeds here without touching Python.
+# Verified as valid RSS 2.0 on 2026-10-07: hespress_fr, hespress_ar, medias24, yabiladi.
+# (Feeds typically expose only the 8-15 latest items, so the corpus grows by polling over time.)
+news_feeds:
+  - { name: "hespress_fr", url: "https://fr.hespress.com/feed",  lang: "fr" }
+  - { name: "hespress_ar", url: "https://www.hespress.com/feed", lang: "ar" }
+  - { name: "medias24",    url: "https://medias24.com/feed/",    lang: "fr" }
+  - { name: "yabiladi",    url: "https://www.yabiladi.com/rss/", lang: "fr" }
+
+# --- App ---------------------------------------------------------------------
 data_dir: "data"
 port: 8000

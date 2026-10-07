@@ -22,7 +22,7 @@ function createFeedCard(post) {
     else if (post.raw_score < 0) card.classList.add('negative');
     else card.style.borderLeftColor = 'var(--text-muted)'; // Neutral
 
-    const sourceIcon = post.source === 'twitter' ? '🐦' : '👽';
+    const sourceIcon = post.source === 'news' ? '📰' : '👽';
     
     // Format timestamp
     const date = new Date(post.created_at);

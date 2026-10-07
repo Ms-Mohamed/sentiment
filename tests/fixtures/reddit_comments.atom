@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>t1_abc123</id>
+    <title>/u/someone on Best cafés in Rabat?</title>
+    <link href="https://www.reddit.com/r/Morocco/comments/x/y/abc123/"/>
+    <updated>2026-10-06T09:15:00+00:00</updated>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;had l-ma7al zween bezzaf, dima top!&lt;/p&gt;&lt;/div&gt;</content>
+  </entry>
+  <entry>
+    <id>t1_def456</id>
+    <title>/u/other on Prix du carburant</title>
+    <link href="https://www.reddit.com/r/Morocco/comments/x/y/def456/"/>
+    <updated>2026-10-06T09:20:00Z</updated>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;Les prix sont insupportables, vraiment nul.&lt;/p&gt;&lt;/div&gt;</content>
+  </entry>
+</feed>

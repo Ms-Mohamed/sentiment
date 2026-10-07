@@ -1,223 +1,269 @@
 """
-Scraper module for fetching social media data from Twitter and Reddit.
+Collector: REAL sources only (Reddit RSS + Moroccan news RSS). No synthetic data.
+
+Design rules
+- Every post gets its true publication date, so the velocity chart reflects reality.
+- Deduplicate by stable post_id (persisted across restarts by scanning data/raw).
+- Region = explicit city mention, otherwise "National". We never guess a region.
+- A failing source is reported (data/processed/sources.json) and never blocks the others.
 """
 
 import os
+import re
 import json
 import yaml
+import html
+import time
+import hashlib
 import logging
 import datetime
-import time
-from typing import List, Dict
-from apscheduler.schedulers.background import BackgroundScheduler
-from region_inferrer import infer_region, REGION_KEYWORDS
-from sentiment_processor import process_raw_files
+import threading
+import urllib.request
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
+from typing import Dict, List, Optional, Set
 
-# Setup logging
+from apscheduler.schedulers.background import BackgroundScheduler
+
+from region_inferrer import infer_region
+from sentiment_processor import process_raw_files, atomic_write
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-import random
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MAX_TEXT_CHARS = 600
 
-# Sample data for demo mode
-DEMO_POSTS = [
-    # Positive / Travel / Culture
-    {"text": "Le trafic à Casablanca est vraiment insupportable ce matin #Casa #Maroc", "region": "Casablanca-Settat", "sentiment": -1},
-    {"text": "Magnifique coucher de soleil sur la corniche de Tanger! La vue est splendide.", "region": "Tanger-Tétouan", "sentiment": 1},
-    {"text": "Superbe weekend à Marrakech, la ville rouge ne déçoit jamais. J'ai adoré l'ambiance de Jemaa el-Fnaa.", "region": "Marrakech-Safi", "sentiment": 1},
-    {"text": "Problèmes de connexion internet à Oujda, quelqu'un d'autre a ce souci?", "region": "Oriental", "sentiment": -1},
-    {"text": "Les montagnes de l'Atlas sont couvertes de neige, vue incroyable depuis Errachidia. Un vrai paradis!", "region": "Drâa-Tafilalet", "sentiment": 1},
-    {"text": "Nouveau projet de transport à Rabat, enfin du progrès pour désengorger la capitale!", "region": "Rabat-Salé", "sentiment": 1},
-    {"text": "Fès est vraiment la capitale spirituelle du pays, j'adore l'ambiance et l'histoire de la médina.", "region": "Fès-Meknès", "sentiment": 1},
-    {"text": "Il fait trop chaud à Agadir aujourd'hui, direction la plage pour un bon bain de mer.", "region": "Souss-Massa", "sentiment": 0},
-    {"text": "Match incroyable hier soir, l'ambiance au stade était folle! Dima Maghrib!", "region": "Casablanca-Settat", "sentiment": 1},
-    {"text": "Augmentation des prix du carburant et des légumes, c'est trop difficile pour le pouvoir d'achat.", "region": "National", "sentiment": -1},
-    
-    # Dynamic additions:
-    {"text": "Ce vendredi c'est Couscous en famille! Le meilleur moment de la semaine #Couscous #Friday", "region": "National", "sentiment": 1},
-    {"text": "Le tramway de Rabat-Salé est super propre et ponctuel, bravo aux équipes.", "region": "Rabat-Salé", "sentiment": 1},
-    {"text": "Un thé à la menthe (Atay) bien chaud avec du 'chebakia' sous la pluie de Chefchaouen, que du bonheur!", "region": "Tanger-Tétouan", "sentiment": 1},
-    {"text": "Session surf incroyable ce matin à Taghazout près d'Agadir. Les vagues sont parfaites!", "region": "Souss-Massa", "sentiment": 1},
-    {"text": "Les coupures d'eau répétées dans certains villages de la région Drâa-Tafilalet inquiètent les habitants.", "region": "Drâa-Tafilalet", "sentiment": -1},
-    {"text": "Le complexe d'énergie solaire Noor à Ouarzazate est une immense fierté nationale.", "region": "Drâa-Tafilalet", "sentiment": 1},
-    {"text": "Les travaux de la ligne de TGV Al Boraq vers Marrakech avancent très vite, hâte de l'emprunter!", "region": "National", "sentiment": 1},
-    {"text": "Grave accident sur l'autoroute entre Casa et Rabat, soyez prudents sur la route s'il vous plaît.", "region": "Casablanca-Settat", "sentiment": -1},
-    {"text": "Inauguration d'un grand pôle universitaire d'excellence à Oujda, super nouvelle pour nos étudiants.", "region": "Oriental", "sentiment": 1},
-    {"text": "Trop de mendicité et de harcèlement dans la médina de Marrakech, ça gâche l'expérience des touristes.", "region": "Marrakech-Safi", "sentiment": -1},
-    {"text": "Très fier de la qualification historique du club en ligue des champions de la CAF #BotolaPro", "region": "National", "sentiment": 1},
-    {"text": "Panne d'électricité générale dans plusieurs quartiers de Meknès hier soir, situation inadmissible.", "region": "Fès-Meknès", "sentiment": -1},
-    {"text": "Visite insolite de l'ancienne médina de Fès, un labyrinthe chargé d'histoire millénaire.", "region": "Fès-Meknès", "sentiment": 1},
-    {"text": "Les prix de la location immobilière à Casablanca deviennent délirants, impossible pour les jeunes de se loger.", "region": "Casablanca-Settat", "sentiment": -1},
-    {"text": "Le festival Mawazine à Rabat ramène une ambiance festive extraordinaire dans la ville!", "region": "Rabat-Salé", "sentiment": 1},
-    {"text": "Quel accueil chaleureux à Dakhla! Les gens sont d'une gentillesse incroyable.", "region": "Dakhla-Oued Ed-Dahab", "sentiment": 1},
-    {"text": "Le vent souffle extrêmement fort aujourd'hui à Tanger, la traversée en ferry est reportée.", "region": "Tanger-Tétouan", "sentiment": -1},
-    {"text": "Le chômage des jeunes diplômés reste un défi majeur, il faut plus de réformes économiques.", "region": "National", "sentiment": -1},
-    {"text": "Une journée magnifique dans les forêts d'Ifrane, l'air frais fait tellement de bien.", "region": "Fès-Meknès", "sentiment": 1},
-    {"text": "Dégradation flagrante de l'état des routes à Oujda, des nids de poule partout.", "region": "Oriental", "sentiment": -1},
-    {"text": "Incroyable victoire de l'équipe nationale! Quelle joie immense dans toutes les rues du pays!", "region": "National", "sentiment": 1},
-    {"text": "Gros retards enregistrés ce matin dans les gares ONCF, aucune explication donnée aux voyageurs.", "region": "National", "sentiment": -1},
-    {"text": "Le marché de poisson d'Essaouira est magique, les sardines grillées sont délicieuses.", "region": "Marrakech-Safi", "sentiment": 1},
-    {"text": "Le coût de la rentrée scolaire est extrêmement lourd pour les familles marocaines de classe moyenne.", "region": "National", "sentiment": -1},
-    {"text": "Sublime weekend de détente dans les oasis de Figuig, calme et ressourcement total.", "region": "Oriental", "sentiment": 1},
-    {"text": "Le soleil brille à Guelmim, la porte du désert! Une hospitalité inoubliable.", "region": "Guelmim-Oued Noun", "sentiment": 1},
-    {"text": "Tempête de sable ce matin à Tan-Tan, la visibilité est très réduite sur la route.", "region": "Guelmim-Oued Noun", "sentiment": -1},
-    {"text": "Superbe visite du port de Tarfaya et du musée Saint-Exupéry, chargé d'histoire.", "region": "Laâyoune-Sakia El Hamra", "sentiment": 1},
-    {"text": "Développement incroyable des infrastructures à Laâyoune, la ville se transforme rapidement.", "region": "Laâyoune-Sakia El Hamra", "sentiment": 1},
-    {"text": "Session de kitesurf spectaculaire dans la lagune de Dakhla, le vent est parfait!", "region": "Dakhla-Oued Ed-Dahab", "sentiment": 1},
-    {"text": "Les cascades d'Ouzoud près d'Azilal sont magnifiques en cette saison! Un spectacle grandiose.", "region": "Béni Mellal-Khénifra", "sentiment": 1},
-    {"text": "Problème d'irrigation pour l'agriculture dans la plaine de Béni Mellal à cause de la sécheresse.", "region": "Béni Mellal-Khénifra", "sentiment": -1},
-    # Authentic Moroccan Arabizi/Darija (Latin) social posts
-    {"text": "had l-ma7al f Casa zween bezzaf! Dima top!", "region": "Casablanca-Settat", "sentiment": 1},
-    {"text": "had l-khdma li darou f Rabat meziana, choukran bezzaf!", "region": "Rabat-Salé", "sentiment": 1},
-    {"text": "walo ma khtdem had l-app, fih glitches khayb bezzaf #walo", "region": "Fès-Meknès", "sentiment": -1},
-    {"text": "dima maghrib! l-match dyal l-youm zween khtir!", "region": "National", "sentiment": 1},
-    {"text": "l-guelssa hna f Agadir zwina bezzaf, atay rkhiss o l-mandar ghzal!", "region": "Souss-Massa", "sentiment": 1}
-]
+# --------------------------------------------------------------------------- #
+# Parsing helpers (pure functions: unit-tested without network)
+# --------------------------------------------------------------------------- #
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+_ARABIC_RE = re.compile(r"[؀-ۿ]")
+_FR_WORDS = {"le", "la", "les", "des", "du", "de", "et", "est", "une", "un", "pour", "dans", "que", "qui", "sur", "au", "aux", "pas", "avec"}
+_EN_WORDS = {"the", "and", "is", "of", "to", "in", "for", "that", "with", "are", "this", "was", "have"}
+
+
+def strip_html(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = html.unescape(s)
+    s = _TAG_RE.sub(" ", s)
+    s = html.unescape(s)  # feeds are often double-escaped
+    return _WS_RE.sub(" ", s).strip()
+
+
+def detect_lang(text: str) -> str:
+    """Tiny heuristic: 'ar' if mostly Arabic script, else fr/en by stopword count, else 'und'."""
+    letters = [c for c in text if c.isalpha()]
+    if letters and sum(1 for c in letters if _ARABIC_RE.match(c)) / len(letters) > 0.3:
+        return "ar"
+    words = re.findall(r"[a-zà-ÿ']+", text.lower())
+    fr = sum(1 for w in words if w in _FR_WORDS)
+    en = sum(1 for w in words if w in _EN_WORDS)
+    if fr == en:
+        return "und"
+    return "fr" if fr > en else "en"
+
+
+def parse_date(value: Optional[str]) -> Optional[datetime.datetime]:
+    """RFC-822 (RSS) or ISO-8601 (Atom) -> naive local datetime."""
+    if not value:
+        return None
+    value = value.strip()
+    dt = None
+    try:
+        dt = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        try:
+            dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def _local(tag: str) -> str:
+    return tag.split('}')[-1]
+
+
+def _children(el: ET.Element) -> Dict[str, ET.Element]:
+    """First child per local tag name (namespace-agnostic)."""
+    out: Dict[str, ET.Element] = {}
+    for c in el:
+        out.setdefault(_local(c.tag), c)
+    return out
+
+
+def parse_feed(xml_bytes: bytes, source: str, kind: str, lang_hint: Optional[str] = None) -> List[Dict]:
+    """
+    Parse an RSS 2.0 or Atom feed into post dicts.
+    kind: 'news' | 'reddit_post' | 'reddit_comment'
+    """
+    root = ET.fromstring(xml_bytes)
+    entries = [e for e in root.iter() if _local(e.tag) in ("item", "entry")]
+    posts = []
+    for e in entries:
+        c = _children(e)
+
+        def txt(name):
+            return (c[name].text or "") if name in c else ""
+
+        title = strip_html(txt("title"))
+        body = strip_html(txt("content") or txt("encoded") or txt("description") or txt("summary"))
+        link = ""
+        if "link" in c:
+            link = c["link"].attrib.get("href") or (c["link"].text or "")
+        raw_id = (txt("id") or txt("guid") or link or title).strip()
+        if not raw_id:
+            continue
+
+        if kind == "reddit_comment":
+            text = body  # the title is just "/u/name on <post title>"
+        elif kind == "reddit_post":
+            text = title if not body or body == title else f"{title}. {body}"
+        else:  # news: headline + lead
+            text = title if not body or body.startswith(title) else f"{title}. {body}"
+        text = text[:MAX_TEXT_CHARS].strip()
+        if len(text) < 8:
+            continue
+
+        created = parse_date(txt("published") or txt("pubDate") or txt("updated") or txt("date")) or datetime.datetime.now()
+        region = infer_region(text) or "National"
+        posts.append({
+            "post_id": f"{source}_{hashlib.sha1(raw_id.encode('utf-8')).hexdigest()[:16]}",
+            "source": source,
+            "kind": kind,
+            "text": text,
+            "url": link or None,
+            "created_at": created.isoformat(),
+            "region": region,
+            "lang": detect_lang(text) if detect_lang(text) != "und" else (lang_hint or "und"),
+            "raw_score": None,
+        })
+    return posts
+
+
+def load_known_ids(raw_dir: str) -> Set[str]:
+    """Collect post_ids already stored so restarts never create duplicates."""
+    ids: Set[str] = set()
+    if not os.path.isdir(raw_dir):
+        return ids
+    pid = re.compile(r'"post_id"\s*:\s*"([^"]+)"')
+    for fn in os.listdir(raw_dir):
+        if not fn.endswith(".jsonl"):
+            continue
+        with open(os.path.join(raw_dir, fn), "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                m = pid.search(line)
+                if m:
+                    ids.add(m.group(1))
+    return ids
+
+
+# --------------------------------------------------------------------------- #
+# Collector
+# --------------------------------------------------------------------------- #
 
 class Scraper:
-    """
-    Handles synthetic data generation for the project demo.
-    """
-
     def __init__(self, config_path: str = "config.yaml"):
-        # Make config_path absolute relative to this file
         if not os.path.isabs(config_path):
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            config_path = os.path.join(base_dir, config_path)
-            
-        with open(config_path, 'r') as f:
+            config_path = os.path.join(BASE_DIR, config_path)
+        with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
-        self.data_dir = self.config.get("data_dir", "data")
-        os.makedirs(os.path.join(self.data_dir, "raw"), exist_ok=True)
+        self.data_dir = os.path.join(BASE_DIR, self.config.get("data_dir", "data"))
+        self.raw_dir = os.path.join(self.data_dir, "raw")
+        self.processed_dir = os.path.join(self.data_dir, "processed")
+        os.makedirs(self.raw_dir, exist_ok=True)
+        os.makedirs(self.processed_dir, exist_ok=True)
+        self.user_agent = self.config.get("user_agent", "MoroccoSentimentAnalysis/2.0")
+        self.known_ids = load_known_ids(self.raw_dir)
+        self.lock = threading.Lock()
+        logger.info(f"Loaded {len(self.known_ids)} known post ids from disk.")
 
-    def inject_hashtags(self, text: str) -> str:
-        """Enriches post texts with relevant Moroccan hashtags based on keywords."""
-        hashtags = ["#Maroc", "#Morocco"]
-        
-        t_lower = text.lower()
-        if "casablanca" in t_lower or "casa" in t_lower:
-            hashtags.extend(["#Casablanca", "#Casa"])
-        if "marrakech" in t_lower:
-            hashtags.extend(["#Marrakech", "#TravelMorocco"])
-        if "tanger" in t_lower:
-            hashtags.extend(["#Tanger", "#Tangier"])
-        if "rabat" in t_lower:
-            hashtags.extend(["#Rabat", "#Capital"])
-        if "oujda" in t_lower:
-            hashtags.extend(["#Oujda", "#Oriental"])
-        if "atlas" in t_lower:
-            hashtags.extend(["#Atlas", "#Nature"])
-        if "fès" in t_lower or "fes" in t_lower:
-            hashtags.extend(["#Fes", "#Medina"])
-        if "agadir" in t_lower:
-            hashtags.extend(["#Agadir", "#Beach"])
-        if "match" in t_lower or "stade" in t_lower or "botola" in t_lower:
-            hashtags.extend(["#Botola", "#Football", "#DimaMaghrib"])
-        if "carburant" in t_lower or "prix" in t_lower:
-            hashtags.extend(["#Economie", "#Inflation"])
-        if "reddit" in t_lower:
-            hashtags.extend(["#MoroccanReddit", "#Discussion"])
-            
-        selected = list(set(hashtags))
-        random.shuffle(selected)
-        return text + " " + " ".join(selected[:3])
+    # -- network -------------------------------------------------------------
+    def fetch(self, url: str) -> bytes:
+        req = urllib.request.Request(url, headers={"User-Agent": self.user_agent, "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read()
 
-    def generate_synthetic_traffic(self) -> List[Dict]:
-        """Generates mock posts for demo volume."""
-        posts = []
-        for _ in range(random.randint(5, 10)):
-            template = random.choice(DEMO_POSTS)
-            text_with_hashtags = self.inject_hashtags(template["text"])
-            posts.append({
-                "post_id": f"sim_{random.getrandbits(32)}",
-                "source": "simulated",
-                "text": text_with_hashtags,
-                "created_at": datetime.datetime.now().isoformat(),
-                "region": template["region"],
-                "lang": "fr",
-                "raw_score": None
-            })
-        return posts
+    def sources(self) -> List[Dict]:
+        """Flatten config into [{name, url, kind, lang}]."""
+        out = []
+        rd = self.config.get("reddit") or {}
+        for sub in rd.get("subreddits", []):
+            out.append({"name": f"reddit_{sub}_posts", "source": "reddit", "kind": "reddit_post", "lang": None,
+                        "url": f"https://www.reddit.com/r/{sub}/new/.rss?limit={rd.get('posts_limit', 50)}"})
+            if rd.get("comments_limit"):
+                out.append({"name": f"reddit_{sub}_comments", "source": "reddit", "kind": "reddit_comment", "lang": None,
+                            "url": f"https://www.reddit.com/r/{sub}/comments/.rss?limit={rd['comments_limit']}"})
+        for feed in self.config.get("news_feeds", []):
+            out.append({"name": feed["name"], "source": "news", "kind": "news", "lang": feed.get("lang"), "url": feed["url"]})
+        return out
 
-    def scrape_reddit(self) -> List[Dict]:
-        """Fetches real Reddit posts from r/Morocco, falling back to mock data if it fails."""
-        posts = []
-        try:
-            import urllib.request
-            import xml.etree.ElementTree as ET
-            req = urllib.request.Request(
-                'https://www.reddit.com/r/Morocco/new/.rss?limit=10', 
-                headers={'User-Agent': 'python:sentiment-app:v1.0 (by /u/researcher)'}
-            )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                root = ET.fromstring(response.read().decode('utf-8'))
-                
-            ns = {'atom': 'http://www.w3.org/2005/Atom'}
-            for entry in root.findall('atom:entry', ns):
-                title_el = entry.find('atom:title', ns)
-                if title_el is None or not title_el.text: continue
-                title = title_el.text
-                
-                id_el = entry.find('atom:id', ns)
-                post_id = id_el.text if id_el is not None else str(random.getrandbits(32))
-                
-                # Try to infer region, otherwise pick a random one for demo purposes
-                inferred_region = infer_region(title)
-                if not inferred_region:
-                    # Fallback to random region so the map stays active
-                    inferred_region = random.choice(list(REGION_KEYWORDS.keys()))
-                
-                posts.append({
-                    "post_id": f"rd_{post_id}",
-                    "source": "reddit",
-                    "text": self.inject_hashtags(f"Reddit: {title}"),
-                    "created_at": datetime.datetime.now().isoformat(),
-                    "region": inferred_region,
-                    "lang": "fr",
-                    "raw_score": None
-                })
-        except Exception as e:
-            logger.warning(f"Real Reddit scrape failed: {e}. No mock data will be injected.")
-        return posts
+    # -- one cycle -----------------------------------------------------------
+    def collect(self) -> (List[Dict], List[Dict]):
+        """Fetch every source. Returns (new_posts, per-source status list)."""
+        new_posts: List[Dict] = []
+        status = []
+        for s in self.sources():
+            t0 = time.perf_counter()
+            entry = {"name": s["name"], "url": s["url"], "ok": False, "fetched": 0, "new": 0, "error": None,
+                     "checked_at": datetime.datetime.now().isoformat(timespec="seconds")}
+            try:
+                posts = parse_feed(self.fetch(s["url"]), s["source"], s["kind"], s["lang"])
+                entry["ok"] = True
+                entry["fetched"] = len(posts)
+                for p in posts:
+                    if p["post_id"] in self.known_ids:
+                        continue
+                    self.known_ids.add(p["post_id"])
+                    new_posts.append(p)
+                    entry["new"] += 1
+            except Exception as e:  # network, HTTP 403/404, malformed XML...
+                entry["error"] = f"{type(e).__name__}: {e}"[:200]
+                logger.warning(f"Source {s['name']} failed: {entry['error']}")
+            entry["duration_ms"] = round((time.perf_counter() - t0) * 1000)
+            status.append(entry)
+        return new_posts, status
 
-    def run_cycle(self):
-        """
-        Runs a full scraping cycle and triggers sentiment processing.
-        """
-        logger.info("Starting scrape cycle...")
-        posts = self.scrape_reddit()
-        
+    def store(self, posts: List[Dict]) -> None:
         if not posts:
-            logger.info("No new posts found this cycle.")
             return
+        path = os.path.join(self.raw_dir, f"{datetime.datetime.now():%Y-%m-%d}.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            for p in posts:
+                f.write(json.dumps(p, ensure_ascii=False) + "\n")
+        logger.info(f"Stored {len(posts)} new posts in {os.path.basename(path)}")
 
-        # Raw storage format /data/raw/YYYY-MM-DD.jsonl
-        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        file_path = os.path.join(self.data_dir, "raw", f"{date_str}.jsonl")
-        
-        # Fast append without loading entire file into memory (Fix O(N^2) scaling)
-        with open(file_path, 'a', encoding='utf-8') as f:
-            for post in posts:
-                f.write(json.dumps(post, ensure_ascii=False) + "\n")
-        
-        logger.info(f"Saved {len(posts)} posts to {file_path}")
-        
-        # Call processing immediately
-        process_raw_files(self.data_dir)
+    def run_cycle(self) -> Dict:
+        """Collect -> store -> process. Safe to call concurrently (manual scrape vs scheduler)."""
+        if not self.lock.acquire(blocking=False):
+            logger.info("A scrape cycle is already running; skipping.")
+            return {"skipped": True}
+        try:
+            logger.info("Starting scrape cycle...")
+            new_posts, status = self.collect()
+            self.store(new_posts)
+            atomic_write(os.path.join(self.processed_dir, "sources.json"), status)
+            process_raw_files(self.data_dir)
+            return {"new_posts": len(new_posts), "sources": status}
+        finally:
+            self.lock.release()
 
-def start_scheduler():
-    """
-    Starts the background scheduler for periodic scraping.
-    """
+
+def start_scheduler() -> Scraper:
     scraper = Scraper()
     scheduler = BackgroundScheduler()
-    # APScheduler: run full scrape cycle every 60 seconds
-    interval = scraper.config.get("scrape_interval_seconds", 60)
-    scheduler.add_job(scraper.run_cycle, 'interval', seconds=interval)
+    interval = scraper.config.get("scrape_interval_seconds", 300)
+    scheduler.add_job(scraper.run_cycle, "interval", seconds=interval,
+                      next_run_time=datetime.datetime.now(), max_instances=1, coalesce=True)
     scheduler.start()
-    logger.info(f"Scheduler started with interval {interval}s")
+    logger.info(f"Scheduler started: every {interval}s (first run now).")
     return scraper
 
+
 if __name__ == "__main__":
-    s = Scraper()
-    s.run_cycle()
+    print(json.dumps(Scraper().run_cycle(), indent=2, ensure_ascii=False))
