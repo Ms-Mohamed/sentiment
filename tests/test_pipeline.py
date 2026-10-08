@@ -246,3 +246,15 @@ def test_empty_corpus_still_reports_dead_sources(tmp_path):
     sp.process_raw_files(data)
     alerts = json.load(open(os.path.join(data, "processed", "alerts.json"), encoding="utf-8"))
     assert alerts[0]["type"] == "SOURCE_DOWN" and "feedX" in alerts[0]["message"]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Looking for a repair shop in Rabat. submitted by /u/SnooDrawings7547 [link] [comments]",
+     "Looking for a repair shop in Rabat."),
+    ("Khot li 3ndo permis ?. submitted by /u/higma55 [link] [comments]", "Khot li 3ndo permis ?."),
+    ("Texte sans pied de page", "Texte sans pied de page"),
+    ("Merci /u/someone pour l'aide, submitted by the way", "Merci /u/someone pour l'aide, submitted by the way"),
+])
+def test_reddit_footer_is_stripped_without_touching_real_text(raw, expected):
+    from scraper import strip_reddit_footer
+    assert strip_reddit_footer(raw) == expected

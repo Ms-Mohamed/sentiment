@@ -97,6 +97,15 @@ def _children(el: ET.Element) -> Dict[str, ET.Element]:
     return out
 
 
+_REDDIT_FOOTER = re.compile(r"\s*submitted by\s+/?u/\S+(?:\s*\[link\])?(?:\s*\[comments\])?\s*$", re.IGNORECASE)
+
+
+def strip_reddit_footer(text: str) -> str:
+    """Reddit RSS appends '... submitted by /u/<handle> [link] [comments]' to every post.
+    It is boilerplate (it pollutes the NLP input) and exposes the author's handle, so drop it."""
+    return _REDDIT_FOOTER.sub("", text).strip()
+
+
 def parse_feed(xml_bytes: bytes, source: str, kind: str, lang_hint: Optional[str] = None) -> List[Dict]:
     """
     Parse an RSS 2.0 or Atom feed into post dicts.
@@ -126,6 +135,8 @@ def parse_feed(xml_bytes: bytes, source: str, kind: str, lang_hint: Optional[str
             text = title if not body or body == title else f"{title}. {body}"
         else:  # news: headline + lead
             text = title if not body or body.startswith(title) else f"{title}. {body}"
+        if kind.startswith("reddit"):
+            text = strip_reddit_footer(text)
         text = text[:MAX_TEXT_CHARS].strip()
         if len(text) < 8:
             continue
